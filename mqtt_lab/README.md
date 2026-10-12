@@ -35,7 +35,7 @@ Dependencies: [`rumqttc`](https://crates.io/crates/rumqttc) (MQTT client),
 
 ## Running
 
-Open two terminals in the project directory. Start the subscriber first —
+Open two terminals in this directory (`cd mqtt_lab` from the repo root). Start the subscriber first —
 MQTT does not store messages for subscribers that aren't connected yet.
 
 ```sh
