@@ -1,0 +1,10 @@
+# Build output (any depth: root and mqtt_hw/)
+target/
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local run logs
+*.log
