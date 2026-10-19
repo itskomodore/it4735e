@@ -1,0 +1,12 @@
+# Rust build output
+target/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Env / secrets
+.env
+.env.*
