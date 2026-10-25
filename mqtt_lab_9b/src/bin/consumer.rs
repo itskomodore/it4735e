@@ -1,29 +1,45 @@
 use futures_lite::StreamExt;
-use lapin::{options::*, types::FieldTable, Connection, ConnectionProperties};
+use lapin::{options::*, types::FieldTable};
+use mqtt_lab_9b::{connect, declare_queue, queue_name, Telemetry};
 
-const QUEUE: &str = "it4735e.group10.telemetry";
+/// Task b) parse one message. Never unwrap network data: bad JSON must not kill the consumer.
+fn handle_message(data: &[u8]) {
+    match serde_json::from_slice::<Telemetry>(data) {
+        Ok(t) => println!(
+            "<< Received ({} bytes): DeviceId={}, packet_no={}, temperature={:.1}, humidity={:.1}",
+            data.len(), t.device_id, t.packet_no, t.temperature, t.humidity
+        ),
+        Err(e) => {
+            println!("<< Received ({} bytes): {}", data.len(), String::from_utf8_lossy(data));
+            println!("   JSON error: {e}");
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect(
-        "amqp://guest:guest@localhost:5672/%2f",
-        ConnectionProperties::default(),
-    ).await?;
+    let conn = connect().await?;
     let ch = conn.create_channel().await?;
-    ch.queue_declare(QUEUE, QueueDeclareOptions { durable: true, ..Default::default() }, FieldTable::default()).await?;
+    declare_queue(&ch).await?;
 
     let mut consumer = ch
-        .basic_consume(QUEUE, "consumer1", BasicConsumeOptions::default(), FieldTable::default())
+        .basic_consume(&queue_name(), "consumer", BasicConsumeOptions::default(), FieldTable::default())
         .await?;
-    println!("Waiting... CTRL+C to exit");
+    println!(" [*] Waiting for messages on {}. To exit press CTRL+C", queue_name());
 
-    while let Some(delivery) = consumer.next().await {
-        let delivery = delivery?;
-        match serde_json::from_slice::<serde_json::Value>(&delivery.data) {
-            Ok(d) => println!("Temperature: {} °C, Humidity: {}%", d["temperature"], d["humidity"]),
-            Err(e) => eprintln!("JSON error: {e}"),
+    loop {
+        tokio::select! {
+            delivery = consumer.next() => {
+                let Some(delivery) = delivery else { break };
+                let delivery = delivery?;
+                handle_message(&delivery.data);
+                // Ack invalid messages too, otherwise they are redelivered forever
+                delivery.ack(BasicAckOptions::default()).await?;
+            }
+            _ = tokio::signal::ctrl_c() => break,
         }
-        delivery.ack(BasicAckOptions::default()).await?;
     }
+    conn.close(200, "bye").await?;
+    println!("Disconnected");
     Ok(())
 }

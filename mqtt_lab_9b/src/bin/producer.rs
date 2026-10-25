@@ -1,30 +1,40 @@
-use lapin::{options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties};
-use serde_json::json;
 use std::time::Duration;
 
-const QUEUE: &str = "it4735e.group10.telemetry";
+use lapin::options::BasicPublishOptions;
+use mqtt_lab_9b::{connect, declare_queue, json_properties, make_sample, queue_name};
+use tokio::time::{interval, MissedTickBehavior};
 
+const START_PACKET_NO: u64 = 126;
+
+/// Task a) publish one sample every 5 s to the durable queue, packet_no + 1 each time.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect(
-        "amqp://guest:guest@localhost:5672/%2f",
-        ConnectionProperties::default(),
-    ).await?;
+    let conn = connect().await?;
     let ch = conn.create_channel().await?;
-    ch.queue_declare(QUEUE, QueueDeclareOptions { durable: true, ..Default::default() }, FieldTable::default()).await?;
+    declare_queue(&ch).await?;
+    println!("Queue {} declared (durable)", queue_name());
 
-    let mut i = 0;
+    let mut tick = interval(Duration::from_secs(5));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut packet_no = START_PACKET_NO;
     loop {
-        let data = json!({ "temperature": 20 + i % 10, "humidity": 30 + i % 30 });
-        ch.basic_publish(
-            "",                        // default exchange
-            QUEUE,                     // routing key = queue name
-            BasicPublishOptions::default(),
-            data.to_string().as_bytes(),
-            BasicProperties::default(),
-        ).await?.await?;               // second await = broker confirm
-        println!("Sent: {data}");
-        i += 1;
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::select! {
+            _ = tick.tick() => {
+                let payload = serde_json::to_vec(&make_sample(packet_no))?;
+                ch.basic_publish(
+                    "",              // default exchange
+                    &queue_name(),   // routing key = queue name
+                    BasicPublishOptions::default(),
+                    &payload,
+                    json_properties(),
+                ).await?.await?;     // second await = broker confirm
+                println!(">> Sent packet_no={packet_no} ({} bytes)", payload.len());
+                packet_no += 1;
+            }
+            _ = tokio::signal::ctrl_c() => break,
+        }
     }
+    conn.close(200, "bye").await?;
+    println!("Disconnected");
+    Ok(())
 }
